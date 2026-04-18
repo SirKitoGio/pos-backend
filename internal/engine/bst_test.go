@@ -3,15 +3,17 @@ package engine
 import (
 	"pos-backend/internal/models"
 	"testing"
+	"time"
 )
 
 func TestBST(t *testing.T) {
 	bst := &BST{}
+	now := time.Now()
 
 	items := []models.Item{
-		{Name: "Burger", Quantity: 10, X: 0, Y: 0},
-		{Name: "Apple", Quantity: 5, X: 0, Y: 1},
-		{Name: "Cherry", Quantity: 20, X: 0, Y: 2},
+		{Name: "Burger", Quantity: 10, Price: 5.99, StartTime: now, X: 0, Y: 0},
+		{Name: "Apple", Quantity: 5, Price: 0.99, StartTime: now, X: 0, Y: 1},
+		{Name: "Cherry", Quantity: 20, Price: 2.50, StartTime: now, X: 0, Y: 2},
 	}
 
 	for _, item := range items {
@@ -37,7 +39,7 @@ func TestBST(t *testing.T) {
 	}
 
 	// Test Update
-	bst.Insert(models.Item{Name: "Burger", Quantity: 50, X: 1, Y: 1})
+	bst.Insert(models.Item{Name: "Burger", Quantity: 50, Price: 5.99, StartTime: now, X: 1, Y: 1})
 	found = bst.Search("Burger")
 	if found.Quantity != 50 {
 		t.Errorf("Expected quantity 50, got %d", found.Quantity)
@@ -51,8 +53,8 @@ func TestBST(t *testing.T) {
 	}
 
 	// Test SearchPrefix
-	bst.Insert(models.Item{Name: "Apple", Quantity: 5, X: 0, Y: 1})
-	bst.Insert(models.Item{Name: "Apricot", Quantity: 3, X: 1, Y: 0})
+	bst.Insert(models.Item{Name: "Apple", Quantity: 5, Price: 0.99, StartTime: now, X: 0, Y: 1})
+	bst.Insert(models.Item{Name: "Apricot", Quantity: 3, Price: 1.50, StartTime: now, X: 1, Y: 0})
 	
 	results := bst.SearchPrefix("Ap")
 	if len(results) != 2 {
