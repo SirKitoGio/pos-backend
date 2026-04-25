@@ -65,27 +65,30 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 		}
 
 		// 2. Update Matrix
-		e.Matrix.Update(x, y, tx.Item, qty, tx.Price, startTime, true)
+		e.Matrix.Update(x, y, tx.Item, qty, tx.Price, tx.ProductType, startTime, true)
 
 		// 3. Update BST
 		e.BST.Insert(models.Item{
-			Name:      tx.Item,
-			Quantity:  qty,
-			Price:     tx.Price,
-			StartTime: startTime,
-			X:         x,
-			Y:         y,
+			Name:           tx.Item,
+			Quantity:       qty,
+			Price:          tx.Price,
+			ProductType:    tx.ProductType,
+			InventoryPlace: tx.InventoryPlace,
+			StartTime:      startTime,
+			X:              x,
+			Y:              y,
 		})
 
 		// 4. Push Undo Action to Stack
 		e.Stack.Push(models.Action{
-			Item:      tx.Item,
-			Qty:       tx.Qty,
-			Price:     tx.Price,
-			Action:    "REMOVE",
-			X:         x,
-			Y:         y,
-			Timestamp: time.Now(),
+			Item:        tx.Item,
+			Qty:         tx.Qty,
+			Price:       tx.Price,
+			ProductType: tx.ProductType,
+			Action:      "REMOVE",
+			X:           x,
+			Y:           y,
+			Timestamp:   time.Now(),
 		})
 
 		// 5. Async Log to Persistence Pipeline
@@ -108,32 +111,35 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 
 		if newQty == 0 {
 			// Update Matrix (clear slot)
-			e.Matrix.Update(existing.X, existing.Y, "", 0, 0, time.Time{}, false)
+			e.Matrix.Update(existing.X, existing.Y, "", 0, 0, "", time.Time{}, false)
 			// Delete from BST
 			e.BST.Delete(tx.Item)
 		} else {
 			// Update Matrix with reduced quantity
-			e.Matrix.Update(existing.X, existing.Y, tx.Item, newQty, existing.Price, existing.StartTime, true)
+			e.Matrix.Update(existing.X, existing.Y, tx.Item, newQty, existing.Price, existing.ProductType, existing.StartTime, true)
 			// Update BST with reduced quantity
 			e.BST.Insert(models.Item{
-				Name:      tx.Item,
-				Quantity:  newQty,
-				Price:     existing.Price,
-				StartTime: existing.StartTime,
-				X:         existing.X,
-				Y:         existing.Y,
+				Name:           tx.Item,
+				Quantity:       newQty,
+				Price:          existing.Price,
+				ProductType:    existing.ProductType,
+				InventoryPlace: existing.InventoryPlace,
+				StartTime:      existing.StartTime,
+				X:              existing.X,
+				Y:              existing.Y,
 			})
 		}
 
 		// Push Undo Action to Stack
 		e.Stack.Push(models.Action{
-			Item:      tx.Item,
-			Qty:       tx.Qty,
-			Price:     existing.Price,
-			Action:    "ADD",
-			X:         existing.X,
-			Y:         existing.Y,
-			Timestamp: time.Now(),
+			Item:        tx.Item,
+			Qty:         tx.Qty,
+			Price:       existing.Price,
+			ProductType: existing.ProductType,
+			Action:      "ADD",
+			X:           existing.X,
+			Y:           existing.Y,
+			Timestamp:   time.Now(),
 		})
 
 		// 5. Async Log to Persistence Pipeline
@@ -160,12 +166,50 @@ func (e *Engine) RebuildState() error {
 	log.Printf("Rebuilding state from %d transactions...", len(txs))
 
 	for i, tx := range txs {
-		// Note: xs[i] and ys[i] are stored in the DB, but processTransaction currently finds new slots.
-		// For a true rebuild, we might want to respect the stored coordinates.
-		// But for now, we'll re-process to maintain consistency with the current logic.
-		e.processTransaction(tx)
-		_ = xs[i]
-		_ = ys[i]
+		x, y := xs[i], ys[i]
+		
+		switch tx.Action {
+		case "ADD":
+			existing := e.BST.Search(tx.Item)
+			qty := tx.Qty
+			startTime := time.Now()
+			if existing != nil {
+				qty += existing.Quantity
+				startTime = existing.StartTime
+			}
+			e.Matrix.Update(x, y, tx.Item, qty, tx.Price, tx.ProductType, startTime, true)
+			e.BST.Insert(models.Item{
+				Name:           tx.Item,
+				Quantity:       qty,
+				Price:          tx.Price,
+				ProductType:    tx.ProductType,
+				InventoryPlace: tx.InventoryPlace,
+				StartTime:      startTime,
+				X:              x,
+				Y:              y,
+			})
+		case "REMOVE":
+			existing := e.BST.Search(tx.Item)
+			if existing != nil {
+				newQty := existing.Quantity - tx.Qty
+				if newQty <= 0 {
+					e.Matrix.Update(x, y, "", 0, 0, "", time.Time{}, false)
+					e.BST.Delete(tx.Item)
+				} else {
+					e.Matrix.Update(x, y, tx.Item, newQty, existing.Price, existing.ProductType, existing.StartTime, true)
+					e.BST.Insert(models.Item{
+						Name:           tx.Item,
+						Quantity:       newQty,
+						Price:          existing.Price,
+						ProductType:    existing.ProductType,
+						InventoryPlace: existing.InventoryPlace,
+						StartTime:      existing.StartTime,
+						X:              x,
+						Y:              y,
+					})
+				}
+			}
+		}
 	}
 
 	log.Println("State rebuild complete.")
@@ -186,7 +230,7 @@ func (e *Engine) SortMatrixAlphabetically() {
 		col := i % e.Matrix.cols
 
 		if row < e.Matrix.rows {
-			e.Matrix.Update(row, col, item.Name, item.Quantity, item.Price, item.StartTime, true)
+			e.Matrix.Update(row, col, item.Name, item.Quantity, item.Price, item.ProductType, item.StartTime, true)
 			// Update BST node with new coordinates
 			item.X = row
 			item.Y = col
@@ -205,47 +249,54 @@ func (e *Engine) Undo() (*models.Action, bool) {
 	log.Printf("Undoing action: %+v", action)
 
 	tx := models.Transaction{
-		Item:   action.Item,
-		Qty:    action.Qty,
-		Price:  action.Price,
-		Action: action.Action,
+		Item:           action.Item,
+		Qty:            action.Qty,
+		Price:          action.Price,
+		ProductType:    action.ProductType,
+		Action:         action.Action,
 	}
 
 	if action.Action == "ADD" {
 		existing := e.BST.Search(action.Item)
 		newQty := action.Qty
 		var startTime time.Time
+		inventoryPlace := ""
 		if existing != nil {
 			newQty += existing.Quantity
 			startTime = existing.StartTime
+			inventoryPlace = existing.InventoryPlace
 		} else {
 			startTime = time.Now()
 		}
-		e.Matrix.Update(action.X, action.Y, action.Item, newQty, action.Price, startTime, true)
+		e.Matrix.Update(action.X, action.Y, action.Item, newQty, action.Price, action.ProductType, startTime, true)
 		e.BST.Insert(models.Item{
-			Name:      action.Item,
-			Quantity:  newQty,
-			Price:     action.Price,
-			StartTime: startTime,
-			X:         action.X,
-			Y:         action.Y,
+			Name:           action.Item,
+			Quantity:       newQty,
+			Price:          action.Price,
+			ProductType:    action.ProductType,
+			InventoryPlace: inventoryPlace,
+			StartTime:      startTime,
+			X:              action.X,
+			Y:              action.Y,
 		})
 	} else if action.Action == "REMOVE" {
 		existing := e.BST.Search(action.Item)
 		if existing != nil {
 			newQty := existing.Quantity - action.Qty
 			if newQty <= 0 {
-				e.Matrix.Update(action.X, action.Y, "", 0, 0, time.Time{}, false)
+				e.Matrix.Update(action.X, action.Y, "", 0, 0, "", time.Time{}, false)
 				e.BST.Delete(action.Item)
 			} else {
-				e.Matrix.Update(action.X, action.Y, action.Item, newQty, existing.Price, existing.StartTime, true)
+				e.Matrix.Update(action.X, action.Y, action.Item, newQty, existing.Price, existing.ProductType, existing.StartTime, true)
 				e.BST.Insert(models.Item{
-					Name:      action.Item,
-					Quantity:  newQty,
-					Price:     existing.Price,
-					StartTime: existing.StartTime,
-					X:         action.X,
-					Y:         action.Y,
+					Name:           action.Item,
+					Quantity:       newQty,
+					Price:          existing.Price,
+					ProductType:    existing.ProductType,
+					InventoryPlace: existing.InventoryPlace,
+					StartTime:      existing.StartTime,
+					X:              action.X,
+					Y:              action.Y,
 				})
 			}
 		}

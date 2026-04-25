@@ -15,7 +15,6 @@ func NewServer(e *engine.Engine) *Server {
 	return &Server{Engine: e}
 }
 
-// IngestHandler handles POST /api/ingest
 func (s *Server) IngestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -28,13 +27,11 @@ func (s *Server) IngestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pushes payload into the Queue and returns 200 OK
 	s.Engine.Queue <- tx
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
 }
 
-// SearchHandler handles GET /api/search?q={query}
 func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -52,7 +49,6 @@ func (s *Server) SearchHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(items)
 }
 
-// UndoHandler handles POST /api/undo
 func (s *Server) UndoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -69,7 +65,6 @@ func (s *Server) UndoHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(action)
 }
 
-// StateHandler handles GET /api/state
 func (s *Server) StateHandler(w http.ResponseWriter, r *http.Request) {
 	state := s.Engine.Matrix.GetState()
 	queueSize := len(s.Engine.Queue)
@@ -85,7 +80,6 @@ func (s *Server) StateHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// SortHandler handles POST /api/sort
 func (s *Server) SortHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

@@ -5,20 +5,17 @@ import (
 	"sync"
 )
 
-// Stack is a thread-safe LIFO storage for actions
 type Stack struct {
 	mu      sync.Mutex
 	actions []models.Action
 }
 
-// Push adds a new action to the top of the stack
 func (s *Stack) Push(action models.Action) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.actions = append(s.actions, action)
 }
 
-// Pop removes and returns the most recent action
 func (s *Stack) Pop() (models.Action, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -33,14 +30,12 @@ func (s *Stack) Pop() (models.Action, bool) {
 	return action, true
 }
 
-// Size returns the current number of actions in the stack
 func (s *Stack) Size() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.actions)
 }
 
-// GetActions returns a copy of the current stack for the UI
 func (s *Stack) GetActions() []models.Action {
 	s.mu.Lock()
 	defer s.mu.Unlock()

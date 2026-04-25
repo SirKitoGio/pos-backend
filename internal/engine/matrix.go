@@ -7,15 +7,13 @@ import (
 	"time"
 )
 
-// Matrix holds the 2D visual state of the warehouse
 type Matrix struct {
-	mu   sync.RWMutex
-	grid [][]models.Slot
-	rows int
-	cols int
+	mu    sync.RWMutex
+	grid  [][]models.Slot
+	rows  int
+	cols  int
 }
 
-// NewMatrix initializes a new fixed-size grid
 func NewMatrix(rows, cols int) *Matrix {
 	grid := make([][]models.Slot, rows)
 	for i := range grid {
@@ -28,8 +26,7 @@ func NewMatrix(rows, cols int) *Matrix {
 	}
 }
 
-// Update updates an item at the specified coordinates
-func (m *Matrix) Update(x, y int, item string, qty int, price float64, startTime time.Time, isFull bool) error {
+func (m *Matrix) Update(x, y int, item string, qty int, price float64, productType string, startTime time.Time, isFull bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -38,21 +35,20 @@ func (m *Matrix) Update(x, y int, item string, qty int, price float64, startTime
 	}
 
 	m.grid[x][y] = models.Slot{
-		ItemName:  item,
-		Quantity:  qty,
-		Price:     price,
-		StartTime: startTime,
-		IsFull:    isFull,
+		ItemName:    item,
+		Quantity:    qty,
+		Price:       price,
+		ProductType: productType,
+		StartTime:   startTime,
+		IsFull:      isFull,
 	}
 	return nil
 }
 
-// GetState returns a snapshot of the grid for the API
 func (m *Matrix) GetState() [][]models.Slot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Return a deep copy to avoid race conditions when the API reads it
 	snapshot := make([][]models.Slot, m.rows)
 	for i := range m.grid {
 		snapshot[i] = make([]models.Slot, m.cols)
@@ -61,7 +57,6 @@ func (m *Matrix) GetState() [][]models.Slot {
 	return snapshot
 }
 
-// Clear resets all slots in the matrix
 func (m *Matrix) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -72,7 +67,6 @@ func (m *Matrix) Clear() {
 	}
 }
 
-// FindFirstEmpty finds the first available slot in the matrix
 func (m *Matrix) FindFirstEmpty() (int, int, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
