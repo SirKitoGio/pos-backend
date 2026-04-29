@@ -39,15 +39,30 @@ func main() {
 	// 5. Initialize the API Server
 	server := api.NewServer(e)
 
+	// Middleware for CORS
+	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+			
+			if r.Method == "OPTIONS" {
+				return
+			}
+			
+			next(w, r)
+		}
+	}
+
 	// 4. Setup Routes
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
 	})
-	http.HandleFunc("/api/ingest", server.IngestHandler)
-	http.HandleFunc("/api/search", server.SearchHandler)
-	http.HandleFunc("/api/undo", server.UndoHandler)
-	http.HandleFunc("/api/sort", server.SortHandler)
-	http.HandleFunc("/api/state", server.StateHandler)
+	http.HandleFunc("/api/ingest", corsMiddleware(server.IngestHandler))
+	http.HandleFunc("/api/search", corsMiddleware(server.SearchHandler))
+	http.HandleFunc("/api/undo", corsMiddleware(server.UndoHandler))
+	http.HandleFunc("/api/sort", corsMiddleware(server.SortHandler))
+	http.HandleFunc("/api/state", corsMiddleware(server.StateHandler))
 
 	// 5. Start the HTTP Server
 	port := ":8080"
