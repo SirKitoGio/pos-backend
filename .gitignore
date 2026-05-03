@@ -1,0 +1,4 @@
+.env
+server
+check_db_content.go
+test_manual_insert.go

@@ -7,20 +7,36 @@ import (
 	"pos-backend/internal/api"
 	"pos-backend/internal/engine"
 	"pos-backend/internal/repository"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	log.Println("Initializing POS Backend Engine...")
 
-	connStr := os.Getenv("DATABASE_URL")
-	if connStr == "" {
-		connStr = "postgres://postgres:postgres@localhost:5432/pos?sslmode=disable"
-		log.Println("DATABASE_URL not set, using default local string")
+	// Load .env file if it exists
+	err := godotenv.Load()
+	if err != nil {
+		cwd, _ := os.Getwd()
+		log.Printf("Warning: godotenv failed to load .env: %v (Current working directory: %s)", err, cwd)
 	}
 
-	repo, err := repository.NewRepository(connStr)
+	// Get Supabase credentials for API-based repository
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseAnonKey := os.Getenv("SUPABASE_ANON_KEY")
+
+	if supabaseURL == "" || supabaseAnonKey == "" {
+		log.Fatal("CRITICAL: SUPABASE_URL or SUPABASE_ANON_KEY not set. Backend requires persistence to operate.")
+	}
+
+	repo, err := repository.NewRepository(supabaseURL, supabaseAnonKey)
 	if err != nil {
-		log.Printf("Warning: Could not connect to database: %v. Persistence will be disabled.", err)
+		log.Fatalf("CRITICAL: Could not initialize repository: %v", err)
+	}
+
+	// Strict connection check
+	if err := repo.Verify(); err != nil {
+		log.Fatalf("CRITICAL: Database connection verification failed: %v. Please check your network, credentials, and Supabase RLS policies.", err)
 	}
 
 	// 2. Initialize the Engine
@@ -45,24 +61,35 @@ func main() {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
-			
+
 			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
 				return
 			}
-			
+
 			next(w, r)
 		}
+	}
+
+	// Helper to chain middleware
+	chain := func(h http.HandlerFunc, middlewares ...func(http.HandlerFunc) http.HandlerFunc) http.HandlerFunc {
+		for _, m := range middlewares {
+			h = m(h)
+		}
+		return h
 	}
 
 	// 4. Setup Routes
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
 	})
-	http.HandleFunc("/api/ingest", corsMiddleware(server.IngestHandler))
-	http.HandleFunc("/api/search", corsMiddleware(server.SearchHandler))
-	http.HandleFunc("/api/undo", corsMiddleware(server.UndoHandler))
-	http.HandleFunc("/api/sort", corsMiddleware(server.SortHandler))
-	http.HandleFunc("/api/state", corsMiddleware(server.StateHandler))
+
+	// Protected API Routes
+	http.HandleFunc("/api/ingest", chain(server.IngestHandler, api.AuthMiddleware, corsMiddleware))
+	http.HandleFunc("/api/search", chain(server.SearchHandler, api.AuthMiddleware, corsMiddleware))
+	http.HandleFunc("/api/undo", chain(server.UndoHandler, api.AuthMiddleware, corsMiddleware))
+	http.HandleFunc("/api/sort", chain(server.SortHandler, api.AuthMiddleware, corsMiddleware))
+	http.HandleFunc("/api/state", chain(server.StateHandler, api.AuthMiddleware, corsMiddleware))
 
 	// 5. Start the HTTP Server
 	port := ":8080"

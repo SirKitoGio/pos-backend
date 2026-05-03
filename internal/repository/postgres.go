@@ -1,91 +1,106 @@
 package repository
 
 import (
-	"database/sql"
+	"encoding/json"
 	"log"
 	"pos-backend/internal/models"
 
-	_ "github.com/lib/pq"
+	"github.com/supabase-community/postgrest-go"
 )
 
 type Repository struct {
-	db *sql.DB
+	client *postgrest.Client
 }
 
-func NewRepository(connStr string) (*Repository, error) {
-	db, err := sql.Open("postgres", connStr)
+func NewRepository(url, anonKey string) (*Repository, error) {
+	if url == "" || anonKey == "" {
+		return nil, log.New(log.Writer(), "repo: ", log.LstdFlags).Output(2, "SUPABASE_URL or SUPABASE_ANON_KEY missing")
+	}
+
+	client := postgrest.NewClient(url+"/rest/v1", "", map[string]string{
+		"apikey":        anonKey,
+		"Authorization": "Bearer " + anonKey,
+	})
+
+	return &Repository{client: client}, nil
+}
+
+// Verify checks if the database is reachable and credentials are valid
+func (r *Repository) Verify() error {
+	// We attempt to select one row from the transactions table to verify the connection and RLS policies
+	resp, _, err := r.client.From("transactions").Select("id", "exact", false).Limit(1, "").Execute()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := db.Ping(); err != nil {
-		return nil, err
-	}
-
-	repo := &Repository{db: db}
-	if err := repo.InitSchema(); err != nil {
-		return nil, err
-	}
-
-	return repo, nil
+	// If we get here, the API reached the database. 
+	// Note: An empty response is fine as long as err is nil.
+	log.Printf("Database connection verified successfully. Response size: %d bytes", len(resp))
+	return nil
 }
 
 func (r *Repository) InitSchema() error {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS transactions (
-			id SERIAL PRIMARY KEY,
-			item_name TEXT NOT NULL,
-			quantity INTEGER NOT NULL,
-			price DOUBLE PRECISION NOT NULL DEFAULT 0,
-			product_type TEXT NOT NULL DEFAULT '',
-			inventory_place TEXT NOT NULL DEFAULT '',
-			action TEXT NOT NULL,
-			x INTEGER NOT NULL,
-			y INTEGER NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION NOT NULL DEFAULT 0;`,
-		`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS product_type TEXT NOT NULL DEFAULT '';`,
-		`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS inventory_place TEXT NOT NULL DEFAULT '';`,
-	}
-
-	for _, q := range queries {
-		if _, err := r.db.Exec(q); err != nil {
-			return err
-		}
-	}
+	// With PostgREST, we assume the schema is already created via the SQL script
+	log.Println("Database schema check via API...")
 	return nil
 }
 
 func (r *Repository) LogTransaction(tx models.Transaction, x, y int) {
-	query := `INSERT INTO transactions (item_name, quantity, price, product_type, inventory_place, action, x, y) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := r.db.Exec(query, tx.Item, tx.Qty, tx.Price, tx.ProductType, tx.InventoryPlace, tx.Action, x, y)
+	row := map[string]interface{}{
+		"item_name":       tx.Item,
+		"quantity":        tx.Qty,
+		"price":           tx.Price,
+		"product_type":    tx.ProductType,
+		"inventory_place": tx.InventoryPlace,
+		"action":          tx.Action,
+		"x":               x,
+		"y":               y,
+	}
+
+	body, _, err := r.client.From("transactions").Insert(row, false, "", "", "").Execute()
 	if err != nil {
-		log.Printf("Failed to log transaction to DB: %v", err)
+		log.Printf("Failed to log transaction via API. Error: %v | Response Body: %s", err, string(body))
+	} else {
+		log.Printf("Successfully logged transaction for item: %s", tx.Item)
 	}
 }
 
 func (r *Repository) GetAllTransactions() ([]models.Transaction, []int, []int, error) {
-	query := `SELECT item_name, quantity, price, product_type, inventory_place, action, x, y FROM transactions ORDER BY created_at ASC`
-	rows, err := r.db.Query(query)
+	result, _, err := r.client.From("transactions").Select("*", "exact", false).Order("created_at", &postgrest.OrderOpts{Ascending: true}).Execute()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	defer rows.Close()
+
+	var data []struct {
+		ItemName       string  `json:"item_name"`
+		Quantity       int     `json:"quantity"`
+		Price          float64 `json:"price"`
+		ProductType    string  `json:"product_type"`
+		InventoryPlace string  `json:"inventory_place"`
+		Action         string  `json:"action"`
+		X              int     `json:"x"`
+		Y              int     `json:"y"`
+	}
+
+	if err := json.Unmarshal(result, &data); err != nil {
+		return nil, nil, nil, err
+	}
 
 	var txs []models.Transaction
 	var xs []int
 	var ys []int
 
-	for rows.Next() {
-		var tx models.Transaction
-		var x, y int
-		if err := rows.Scan(&tx.Item, &tx.Qty, &tx.Price, &tx.ProductType, &tx.InventoryPlace, &tx.Action, &x, &y); err != nil {
-			return nil, nil, nil, err
-		}
-		txs = append(txs, tx)
-		xs = append(xs, x)
-		ys = append(ys, y)
+	for _, d := range data {
+		txs = append(txs, models.Transaction{
+			Item:           d.ItemName,
+			Qty:            d.Quantity,
+			Price:          d.Price,
+			ProductType:    d.ProductType,
+			InventoryPlace: d.InventoryPlace,
+			Action:         d.Action,
+		})
+		xs = append(xs, d.X)
+		ys = append(ys, d.Y)
 	}
 
 	return txs, xs, ys, nil
