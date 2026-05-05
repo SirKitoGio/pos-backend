@@ -4,26 +4,30 @@ import (
 	"log"
 	"pos-backend/internal/models"
 	"pos-backend/internal/repository"
+	"sync"
 	"time"
 )
 
 // Engine orchestrates the data structures and background processing
 type Engine struct {
-	Matrix *Matrix
-	BST    *BST
-	Stack  *Stack
-	Queue  chan models.Transaction
-	Repo   *repository.Repository
+	Matrix   *Matrix
+	BST      *BST
+	Stack    *Stack
+	AuditLog []models.Action
+	mu       sync.RWMutex
+	Queue    chan models.Transaction
+	Repo     *repository.Repository
 }
 
 // NewEngine initializes the core data structures
 func NewEngine(repo *repository.Repository) *Engine {
 	return &Engine{
-		Matrix: NewMatrix(10, 10), // Example grid size
-		BST:    &BST{},
-		Stack:  &Stack{},
-		Queue:  make(chan models.Transaction, 100),
-		Repo:   repo,
+		Matrix:   NewMatrix(10, 10), // Example grid size
+		BST:      &BST{},
+		Stack:    &Stack{},
+		AuditLog: []models.Action{},
+		Queue:    make(chan models.Transaction, 100),
+		Repo:     repo,
 	}
 }
 
@@ -36,17 +40,45 @@ func (e *Engine) StartWorker() {
 	}()
 }
 
+func (e *Engine) addAuditLog(action models.Action) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.AuditLog = append(e.AuditLog, action)
+}
+
+func (e *Engine) GetAuditLog() []models.Action {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	
+	snapshot := make([]models.Action, len(e.AuditLog))
+	copy(snapshot, e.AuditLog)
+	return snapshot
+}
+
+// ClearState resets the in-memory data structures
+func (e *Engine) ClearState() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Matrix.Clear()
+	e.BST = &BST{}
+	e.Stack = &Stack{}
+	e.AuditLog = []models.Action{}
+}
+
 // processTransaction updates the internal state based on incoming payloads
 func (e *Engine) processTransaction(tx models.Transaction) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	log.Printf("Processing transaction: %+v", tx)
+
+	var x, y int
+	var qty int
+	var startTime time.Time
 
 	switch tx.Action {
 	case "ADD":
-		// 1. Check if item already exists
-		existing := e.BST.Search(tx.Item)
-		var x, y int
-		var qty int
-		var startTime time.Time
+		// 1. Check if item already exists for this specific date
+		existing := e.BST.Search(tx.Item, tx.Date)
 
 		if existing != nil {
 			x, y = existing.X, existing.Y
@@ -65,7 +97,7 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 		}
 
 		// 2. Update Matrix
-		e.Matrix.Update(x, y, tx.Item, qty, tx.Price, tx.ProductType, startTime, true)
+		e.Matrix.Update(x, y, tx.Item, qty, tx.Price, tx.ProductType, tx.Date, startTime, true)
 
 		// 3. Update BST
 		e.BST.Insert(models.Item{
@@ -74,6 +106,7 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 			Price:          tx.Price,
 			ProductType:    tx.ProductType,
 			InventoryPlace: tx.InventoryPlace,
+			Date:           tx.Date,
 			StartTime:      startTime,
 			X:              x,
 			Y:              y,
@@ -85,38 +118,35 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 			Qty:         tx.Qty,
 			Price:       tx.Price,
 			ProductType: tx.ProductType,
+			Date:        tx.Date,
 			Action:      "REMOVE",
 			X:           x,
 			Y:           y,
 			Timestamp:   time.Now(),
 		})
 
-		// 5. Async Log to Persistence Pipeline
-		if e.Repo != nil {
-			go e.Repo.LogTransaction(tx, x, y)
-		}
-
-	case "REMOVE":
+	case "REMOVE", "DELETE":
 		// Find item coordinates in BST
-		existing := e.BST.Search(tx.Item)
+		existing := e.BST.Search(tx.Item, tx.Date)
 		if existing == nil {
-			log.Printf("Item %s not found in BST", tx.Item)
+			log.Printf("Item %s on date %s not found in BST", tx.Item, tx.Date)
 			return
 		}
 
+		x, y = existing.X, existing.Y
 		newQty := existing.Quantity - tx.Qty
-		if newQty < 0 {
+		if tx.Action == "DELETE" || newQty < 0 {
 			newQty = 0
 		}
 
 		if newQty == 0 {
 			// Update Matrix (clear slot)
-			e.Matrix.Update(existing.X, existing.Y, "", 0, 0, "", time.Time{}, false)
+			e.Matrix.Update(x, y, "", 0, 0, "", "", time.Time{}, false)
 			// Delete from BST
-			e.BST.Delete(tx.Item)
+			e.BST.Delete(tx.Item, tx.Date)
 		} else {
 			// Update Matrix with reduced quantity
-			e.Matrix.Update(existing.X, existing.Y, tx.Item, newQty, existing.Price, existing.ProductType, existing.StartTime, true)
+			e.Matrix.Update(x, y, tx.Item, newQty, existing.Price, existing.ProductType, tx.Date, existing.StartTime, true)
 			// Update BST with reduced quantity
 			e.BST.Insert(models.Item{
 				Name:           tx.Item,
@@ -124,9 +154,10 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 				Price:          existing.Price,
 				ProductType:    existing.ProductType,
 				InventoryPlace: existing.InventoryPlace,
+				Date:           tx.Date,
 				StartTime:      existing.StartTime,
-				X:              existing.X,
-				Y:              existing.Y,
+				X:              x,
+				Y:              y,
 			})
 		}
 
@@ -136,23 +167,25 @@ func (e *Engine) processTransaction(tx models.Transaction) {
 			Qty:         tx.Qty,
 			Price:       existing.Price,
 			ProductType: existing.ProductType,
+			Date:        tx.Date,
 			Action:      "ADD",
-			X:           existing.X,
-			Y:           existing.Y,
+			X:           x,
+			Y:           y,
 			Timestamp:   time.Now(),
 		})
 
-		// 5. Async Log to Persistence Pipeline
-		if e.Repo != nil {
-			go e.Repo.LogTransaction(tx, existing.X, existing.Y)
-		}
-
 	default:
 		log.Printf("Unknown action: %s", tx.Action)
+		return
+	}
+
+	// 5. Synchronous Log to Persistence Pipeline to prevent 'Split Brain' divergence
+	if e.Repo != nil {
+		e.Repo.LogTransaction(tx, x, y)
 	}
 }
 
-// RebuildState reads the transaction log from PostgreSQL and rebuilds the Matrix and BST
+// RebuildState reads the transaction log from PostgreSQL and rebuilds the Matrix, BST, and AuditLog
 func (e *Engine) RebuildState() error {
 	if e.Repo == nil {
 		return nil
@@ -170,44 +203,95 @@ func (e *Engine) RebuildState() error {
 		
 		switch tx.Action {
 		case "ADD":
-			existing := e.BST.Search(tx.Item)
+			existing := e.BST.Search(tx.Item, tx.Date)
 			qty := tx.Qty
 			startTime := time.Now()
 			if existing != nil {
 				qty += existing.Quantity
 				startTime = existing.StartTime
 			}
-			e.Matrix.Update(x, y, tx.Item, qty, tx.Price, tx.ProductType, startTime, true)
+			e.Matrix.Update(x, y, tx.Item, qty, tx.Price, tx.ProductType, tx.Date, startTime, true)
 			e.BST.Insert(models.Item{
 				Name:           tx.Item,
 				Quantity:       qty,
 				Price:          tx.Price,
 				ProductType:    tx.ProductType,
 				InventoryPlace: tx.InventoryPlace,
+				Date:           tx.Date,
 				StartTime:      startTime,
 				X:              x,
 				Y:              y,
 			})
-		case "REMOVE":
-			existing := e.BST.Search(tx.Item)
+			// Rebuild history stack
+			e.Stack.Push(models.Action{
+				Item:        tx.Item,
+				Qty:         tx.Qty,
+				Price:       tx.Price,
+				ProductType: tx.ProductType,
+				Date:        tx.Date,
+				Action:      "REMOVE",
+				X:           x,
+				Y:           y,
+				Timestamp:   time.Now(),
+			})
+			// Rebuild Audit Log
+			e.addAuditLog(models.Action{
+				Item:        tx.Item,
+				Qty:         tx.Qty,
+				Price:       tx.Price,
+				ProductType: tx.ProductType,
+				Date:        tx.Date,
+				Action:      "ADD",
+				X:           x,
+				Y:           y,
+				Timestamp:   time.Now(),
+			})
+
+		case "REMOVE", "DELETE":
+			existing := e.BST.Search(tx.Item, tx.Date)
 			if existing != nil {
 				newQty := existing.Quantity - tx.Qty
-				if newQty <= 0 {
-					e.Matrix.Update(x, y, "", 0, 0, "", time.Time{}, false)
-					e.BST.Delete(tx.Item)
+				if tx.Action == "DELETE" || newQty <= 0 {
+					e.Matrix.Update(x, y, "", 0, 0, "", "", time.Time{}, false)
+					e.BST.Delete(tx.Item, tx.Date)
 				} else {
-					e.Matrix.Update(x, y, tx.Item, newQty, existing.Price, existing.ProductType, existing.StartTime, true)
+					e.Matrix.Update(x, y, tx.Item, newQty, existing.Price, existing.ProductType, tx.Date, existing.StartTime, true)
 					e.BST.Insert(models.Item{
 						Name:           tx.Item,
 						Quantity:       newQty,
 						Price:          existing.Price,
 						ProductType:    existing.ProductType,
 						InventoryPlace: existing.InventoryPlace,
+						Date:           tx.Date,
 						StartTime:      existing.StartTime,
 						X:              x,
 						Y:              y,
 					})
 				}
+				// Rebuild history stack
+				e.Stack.Push(models.Action{
+					Item:        tx.Item,
+					Qty:         tx.Qty,
+					Price:       existing.Price,
+					ProductType: existing.ProductType,
+					Date:        tx.Date,
+					Action:      "ADD",
+					X:           x,
+					Y:           y,
+					Timestamp:   time.Now(),
+				})
+				// Rebuild Audit Log
+				e.addAuditLog(models.Action{
+					Item:        tx.Item,
+					Qty:         tx.Qty,
+					Price:       existing.Price,
+					ProductType: existing.ProductType,
+					Date:        tx.Date,
+					Action:      tx.Action,
+					X:           x,
+					Y:           y,
+					Timestamp:   time.Now(),
+				})
 			}
 		}
 	}
@@ -230,7 +314,7 @@ func (e *Engine) SortMatrixAlphabetically() {
 		col := i % e.Matrix.cols
 
 		if row < e.Matrix.rows {
-			e.Matrix.Update(row, col, item.Name, item.Quantity, item.Price, item.ProductType, item.StartTime, true)
+			e.Matrix.Update(row, col, item.Name, item.Quantity, item.Price, item.ProductType, item.Date, item.StartTime, true)
 			// Update BST node with new coordinates
 			item.X = row
 			item.Y = col
@@ -241,6 +325,8 @@ func (e *Engine) SortMatrixAlphabetically() {
 
 // Undo pops the top action and applies the reverse logic
 func (e *Engine) Undo() (*models.Action, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	action, ok := e.Stack.Pop()
 	if !ok {
 		return nil, false
@@ -253,11 +339,12 @@ func (e *Engine) Undo() (*models.Action, bool) {
 		Qty:            action.Qty,
 		Price:          action.Price,
 		ProductType:    action.ProductType,
+		Date:           action.Date,
 		Action:         action.Action,
 	}
 
 	if action.Action == "ADD" {
-		existing := e.BST.Search(action.Item)
+		existing := e.BST.Search(action.Item, action.Date)
 		newQty := action.Qty
 		var startTime time.Time
 		inventoryPlace := ""
@@ -268,32 +355,34 @@ func (e *Engine) Undo() (*models.Action, bool) {
 		} else {
 			startTime = time.Now()
 		}
-		e.Matrix.Update(action.X, action.Y, action.Item, newQty, action.Price, action.ProductType, startTime, true)
+		e.Matrix.Update(action.X, action.Y, action.Item, newQty, action.Price, action.ProductType, action.Date, startTime, true)
 		e.BST.Insert(models.Item{
 			Name:           action.Item,
 			Quantity:       newQty,
 			Price:          action.Price,
 			ProductType:    action.ProductType,
 			InventoryPlace: inventoryPlace,
+			Date:           action.Date,
 			StartTime:      startTime,
 			X:              action.X,
 			Y:              action.Y,
 		})
 	} else if action.Action == "REMOVE" {
-		existing := e.BST.Search(action.Item)
+		existing := e.BST.Search(action.Item, action.Date)
 		if existing != nil {
 			newQty := existing.Quantity - action.Qty
 			if newQty <= 0 {
-				e.Matrix.Update(action.X, action.Y, "", 0, 0, "", time.Time{}, false)
-				e.BST.Delete(action.Item)
+				e.Matrix.Update(action.X, action.Y, "", 0, 0, "", "", time.Time{}, false)
+				e.BST.Delete(action.Item, action.Date)
 			} else {
-				e.Matrix.Update(action.X, action.Y, action.Item, newQty, existing.Price, existing.ProductType, existing.StartTime, true)
+				e.Matrix.Update(action.X, action.Y, action.Item, newQty, existing.Price, existing.ProductType, action.Date, existing.StartTime, true)
 				e.BST.Insert(models.Item{
 					Name:           action.Item,
 					Quantity:       newQty,
 					Price:          existing.Price,
 					ProductType:    existing.ProductType,
 					InventoryPlace: existing.InventoryPlace,
+					Date:           action.Date,
 					StartTime:      existing.StartTime,
 					X:              action.X,
 					Y:              action.Y,
@@ -303,7 +392,7 @@ func (e *Engine) Undo() (*models.Action, bool) {
 	}
 
 	if e.Repo != nil {
-		go e.Repo.LogTransaction(tx, action.X, action.Y)
+		e.Repo.LogTransaction(tx, action.X, action.Y)
 	}
 
 	return &action, true

@@ -7,11 +7,12 @@ import (
 
 func TestBST(t *testing.T) {
 	bst := &BST{}
+	date := "2024-01-01"
 
 	items := []models.Item{
-		{Name: "Burger", Quantity: 10, X: 0, Y: 0},
-		{Name: "Apple", Quantity: 5, X: 0, Y: 1},
-		{Name: "Cherry", Quantity: 20, X: 0, Y: 2},
+		{Name: "Burger", Quantity: 10, X: 0, Y: 0, Date: date},
+		{Name: "Apple", Quantity: 5, X: 0, Y: 1, Date: date},
+		{Name: "Cherry", Quantity: 20, X: 0, Y: 2, Date: date},
 	}
 
 	for _, item := range items {
@@ -19,36 +20,36 @@ func TestBST(t *testing.T) {
 	}
 
 	// Test Search
-	found := bst.Search("Burger")
+	found := bst.Search("Burger", date)
 	if found == nil || found.Name != "Burger" {
 		t.Errorf("Expected to find Burger, got %v", found)
 	}
 
 	// Test Case Insensitive Search
-	found = bst.Search("apple")
+	found = bst.Search("apple", date)
 	if found == nil || found.Name != "Apple" {
 		t.Errorf("Expected to find Apple, got %v", found)
 	}
 
-	found = bst.Search("Donut")
+	found = bst.Search("Donut", date)
 	if found != nil {
 		t.Errorf("Expected not to find Donut, got %v", found)
 	}
 
-	bst.Insert(models.Item{Name: "Burger", Quantity: 50, X: 1, Y: 1})
-	found = bst.Search("Burger")
+	bst.Insert(models.Item{Name: "Burger", Quantity: 50, X: 1, Y: 1, Date: date})
+	found = bst.Search("Burger", date)
 	if found.Quantity != 50 {
 		t.Errorf("Expected quantity 50, got %d", found.Quantity)
 	}
 
-	bst.Delete("Apple")
-	found = bst.Search("Apple")
+	bst.Delete("Apple", date)
+	found = bst.Search("Apple", date)
 	if found != nil {
 		t.Errorf("Expected Apple to be deleted")
 	}
 
-	bst.Insert(models.Item{Name: "Apple", Quantity: 5, X: 0, Y: 1})
-	bst.Insert(models.Item{Name: "Apricot", Quantity: 3, X: 1, Y: 0})
+	bst.Insert(models.Item{Name: "Apple", Quantity: 5, X: 0, Y: 1, Date: date})
+	bst.Insert(models.Item{Name: "Apricot", Quantity: 3, X: 1, Y: 0, Date: date})
 	
 	results := bst.SearchPrefix("Ap")
 	if len(results) != 2 {

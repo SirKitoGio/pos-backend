@@ -26,7 +26,7 @@ func NewMatrix(rows, cols int) *Matrix {
 	}
 }
 
-func (m *Matrix) Update(x, y int, item string, qty int, price float64, productType string, startTime time.Time, isFull bool) error {
+func (m *Matrix) Update(x, y int, item string, qty int, price float64, productType string, date string, startTime time.Time, isFull bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -39,6 +39,7 @@ func (m *Matrix) Update(x, y int, item string, qty int, price float64, productTy
 		Quantity:    qty,
 		Price:       price,
 		ProductType: productType,
+		Date:        date,
 		StartTime:   startTime,
 		IsFull:      isFull,
 	}

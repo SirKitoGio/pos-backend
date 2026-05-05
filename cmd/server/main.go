@@ -58,7 +58,15 @@ func main() {
 	// Middleware for CORS
 	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			origin := r.Header.Get("Origin")
+			// Allow the specific Vercel production domain and localhost for development
+			if origin == "https://vento-five.vercel.app" || origin == "http://localhost:5000" || origin == "http://localhost:8080" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else {
+				// Fallback to production domain for browsers that don't send Origin in same-site
+				w.Header().Set("Access-Control-Allow-Origin", "https://vento-five.vercel.app")
+			}
+			
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 

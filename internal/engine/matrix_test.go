@@ -13,7 +13,7 @@ func TestMatrix(t *testing.T) {
 		t.Errorf("Expected first empty to be (0, 0), got (%d, %d)", x, y)
 	}
 
-	err := m.Update(0, 0, "Burger", 10, 5.99, "Food", time.Now(), true)
+	err := m.Update(0, 0, "Burger", 10, 5.99, "Food", "2024-01-01", time.Now(), true)
 	if err != nil {
 		t.Errorf("Error updating matrix: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestMatrix(t *testing.T) {
 		t.Errorf("Expected first empty to be (0, 1), got (%d, %d)", x, y)
 	}
 
-	err = m.Update(5, 5, "Burger", 10, 5.99, "Food", time.Now(), true)
+	err = m.Update(5, 5, "Burger", 10, 5.99, "Food", "2024-01-01", time.Now(), true)
 	if err == nil {
 		t.Error("Expected error for out-of-bounds coordinates")
 	}

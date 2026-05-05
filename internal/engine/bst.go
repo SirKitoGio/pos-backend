@@ -23,14 +23,21 @@ func (t *BST) Insert(item models.Item) {
 	t.root = insert(t.root, item)
 }
 
+func getCompositeKey(name, date string) string {
+	return strings.ToLower(name) + "|" + date
+}
+
 func insert(node *Node, item models.Item) *Node {
 	if node == nil {
 		return &Node{Item: item}
 	}
 
-	if item.Name < node.Item.Name {
+	itemKey := getCompositeKey(item.Name, item.Date)
+	nodeKey := getCompositeKey(node.Item.Name, node.Item.Date)
+
+	if itemKey < nodeKey {
 		node.Left = insert(node.Left, item)
-	} else if item.Name > node.Item.Name {
+	} else if itemKey > nodeKey {
 		node.Right = insert(node.Right, item)
 	} else {
 		// Update existing item
@@ -43,30 +50,30 @@ func insert(node *Node, item models.Item) *Node {
 	return node
 }
 
-// Search retrieves an item by name (exact or partial)
-func (t *BST) Search(query string) *models.Item {
+// Search retrieves an item by name and date
+func (t *BST) Search(name, date string) *models.Item {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return search(t.root, strings.ToLower(query))
+	return search(t.root, getCompositeKey(name, date))
 }
 
-func search(node *Node, query string) *models.Item {
+func search(node *Node, queryKey string) *models.Item {
 	if node == nil {
 		return nil
 	}
 
-	nodeNameLower := strings.ToLower(node.Item.Name)
-	if nodeNameLower == query {
+	nodeKey := getCompositeKey(node.Item.Name, node.Item.Date)
+	if nodeKey == queryKey {
 		return &node.Item
 	}
 
-	if query < nodeNameLower {
-		return search(node.Left, query)
+	if queryKey < nodeKey {
+		return search(node.Left, queryKey)
 	}
-	return search(node.Right, query)
+	return search(node.Right, queryKey)
 }
 
-// SearchPrefix returns all items starting with the given query (case-insensitive)
+// SearchPrefix returns all items whose name starts with the given query (case-insensitive)
 func (t *BST) SearchPrefix(query string) []models.Item {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -84,14 +91,6 @@ func searchPrefix(node *Node, query string, results *[]models.Item) {
 
 	nodeNameLower := strings.ToLower(node.Item.Name)
 
-	// Visit left subtree if query could match items there
-	// We always visit both unless we're sure the query can't match.
-	// For a prefix search, a node's name being greater than the query
-	// doesn't mean its left child can't match.
-	// But if query is greater than the node's prefix, we might skip some.
-	// For simplicity and correctness in a small tree, a full traversal is safe,
-	// but we can optimize.
-
 	searchPrefix(node.Left, query, results)
 
 	if strings.HasPrefix(nodeNameLower, query) {
@@ -101,22 +100,25 @@ func searchPrefix(node *Node, query string, results *[]models.Item) {
 	searchPrefix(node.Right, query, results)
 }
 
-// Delete removes an item from the tree
-func (t *BST) Delete(name string) {
+// Delete removes an item from the tree by name and date
+func (t *BST) Delete(name, date string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.root = delete(t.root, name)
+	t.root = deleteNode(t.root, name, date)
 }
 
-func delete(node *Node, name string) *Node {
+func deleteNode(node *Node, name, date string) *Node {
 	if node == nil {
 		return nil
 	}
 
-	if name < node.Item.Name {
-		node.Left = delete(node.Left, name)
-	} else if name > node.Item.Name {
-		node.Right = delete(node.Right, name)
+	targetKey := getCompositeKey(name, date)
+	nodeKey := getCompositeKey(node.Item.Name, node.Item.Date)
+
+	if targetKey < nodeKey {
+		node.Left = deleteNode(node.Left, name, date)
+	} else if targetKey > nodeKey {
+		node.Right = deleteNode(node.Right, name, date)
 	} else {
 		// Found it
 		if node.Left == nil {
@@ -125,10 +127,10 @@ func delete(node *Node, name string) *Node {
 			return node.Left
 		}
 
-		// Node with two children: Get the inorder successor (smallest in the right subtree)
+		// Node with two children: Get the inorder successor
 		minNode := findMin(node.Right)
 		node.Item = minNode.Item
-		node.Right = delete(node.Right, minNode.Item.Name)
+		node.Right = deleteNode(node.Right, minNode.Item.Name, minNode.Item.Date)
 	}
 	return node
 }

@@ -8,9 +8,11 @@ type Item struct {
 	Price          float64   `json:"price"`
 	ProductType    string    `json:"product_type"`
 	InventoryPlace string    `json:"inventory_place"`
+	Date           string    `json:"date"`
 	StartTime      time.Time `json:"start_time"`
 	X              int       `json:"x"`
 	Y              int       `json:"y"`
+	IsDeleted      bool      `json:"is_deleted"`
 }
 
 type Transaction struct {
@@ -19,6 +21,7 @@ type Transaction struct {
 	Price          float64 `json:"price"`
 	ProductType    string  `json:"product_type"`
 	InventoryPlace string  `json:"inventory_place"`
+	Date           string  `json:"date"`
 	Action         string  `json:"action"` // "ADD" or "REMOVE"
 }
 
@@ -27,6 +30,7 @@ type Action struct {
 	Qty         int       `json:"qty"`
 	Price       float64   `json:"price"`
 	ProductType string    `json:"product_type"`
+	Date        string    `json:"date"`
 	Action      string    `json:"action"` // The reverse of the original action
 	X           int       `json:"x"`
 	Y           int       `json:"y"`
@@ -38,6 +42,8 @@ type Slot struct {
 	Quantity    int       `json:"quantity"`
 	Price       float64   `json:"price"`
 	ProductType string    `json:"product_type"`
+	Date        string    `json:"date"`
 	StartTime   time.Time `json:"start_time"`
 	IsFull      bool      `json:"is_full"`
+	IsDeleted   bool      `json:"is_deleted"`
 }
